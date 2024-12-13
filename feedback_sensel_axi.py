@@ -1,4 +1,6 @@
 import sys
+import math
+from collections import deque
 sys.path.append('./sensel-api/sensel-lib-wrappers/sensel-lib-python')
 import sensel
 import threading
@@ -20,9 +22,12 @@ axi.options.pen_pos_down = 2
 axi.update()
 
 axi.penup()
-
+axi.moveto(75, 60)
+axi.pendown()
 
 enter_pressed = False
+
+prevPos = deque(maxlen=100)
 
 def waitForEnter():
     global enter_pressed
@@ -46,42 +51,69 @@ def initFrame():
     return frame
 
 def scanFrames(frame, info, step, prevX, prevY):
+    return runAxi(frame, info, step, prevX, prevY)
+
+
+def findMaxForce(frame, info):
+    num_rows = info.num_rows
+    num_cols = info.num_cols
+
     error = sensel.readSensor(handle)
     (error, num_frames) = sensel.getNumAvailableFrames(handle)
-    maxForce = 0
-    for i in range(num_frames):
+    for j in range(num_frames):
         error = sensel.getFrame(handle, frame)
-        maxForce = max(maxForce, displayHeatmap(frame, info)) #draws heatmap and gets maximum exerted force on any sensel
+        displayHeatmap(frame, info) #draws heatmap and gets maximum exerted force on any sensel
+
+    force_array = frame.force_array
+    maxForce = -1
+    maxForceIdx = -1
+    for j in range(num_rows*num_cols):
+        if(force_array[j] > maxForce):
+            maxForce = force_array[j]
+            maxForceIdx = j
+
+    y = maxForceIdx//num_cols
+    x = num_cols - (maxForceIdx-y*num_cols)
+    y = num_rows - y
+
+    return (x, y, maxForce)
+
+
+def runAxi(frame, info, step, prevX, prevY):
+    global prevPos
+
+    (fX, fY, maxForce) = findMaxForce(frame, info)
+    if(maxForce > 0):
+        (axiX, axiY) = axi.current_pos()
+
+        x = fX*1.24
+        y = fY*1.22
+
+        newX = min(230, max(0, x))
+        newY = min(125, max(0, y))
+
+        dist = math.dist((newX, newY), (axiX, axiY))
+
+        if dist > 20:
+            r = 20/dist
+            newX = newX*r + axiX*(1-r)
+            newY = newY*r + axiY*(1-r)
     
-    return runAxi(step, maxForce, prevX, prevY)
+        print(newX, newY)
 
-
-def runAxi(step, maxForce, prevX, prevY):
-    w = 100 #drawing width
-    dH = 1000 #change of height between lines
-    forceModifier = 1 #how much height force adds
-    dYLim = 1 #max of how much y can change in a tick
-
-    x = step%w
-    y = (step//w)*dH+maxForce*forceModifier
-
-    #constrain how much y can change
-    if y <= 115:
-        if prevY - y > dYLim: #too big a drop in y
-            y = prevY-dYLim
-        elif prevY - y < -dYLim: #too big a rise in y
-            y = prevY+dYLim
-        
-        if x < 1:  #floating point inaccuracy
-            axi.moveto(x, y)
-        else:
-            axi.lineto(x, y)
-
+        prevPos.append((newX, newY))
+        axi.lineto(newX, newY)
         return (x, y)
 
-    else:
+    elif len(prevPos) > 0:
+        recent = prevPos.pop()
+        axi.lineto(recent[0], recent[1])
+        print("searching...")
         return (0, 0)
 
+    else:
+        print("HELP")
+        return (0, 0)
 
 def displayHeatmap(frame, info):
     num_rows = info.num_rows
@@ -137,6 +169,7 @@ if __name__ == "__main__":
         t = threading.Thread(target=waitForEnter)
         t.start()
         step = 0
+        axi.delay(500)
         (prevX, prevY) = (0, 0)
         while not enter_pressed:
             (prevX, prevY) = scanFrames(frame, info, step, prevX, prevY)

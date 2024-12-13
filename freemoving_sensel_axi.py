@@ -19,8 +19,8 @@ axi.options.pen_pos_up = 98
 axi.options.pen_pos_down = 2
 axi.update()
 
-axi.penup()
 
+axi.moveto(70, 60)
 
 enter_pressed = False
 
@@ -45,42 +45,56 @@ def initFrame():
     error = sensel.startScanning(handle)
     return frame
 
-def scanFrames(frame, info, step, prevX, prevY):
+def scanFrames(frame, info):
     error = sensel.readSensor(handle)
     (error, num_frames) = sensel.getNumAvailableFrames(handle)
-    maxForce = 0
     for i in range(num_frames):
         error = sensel.getFrame(handle, frame)
-        maxForce = max(maxForce, displayHeatmap(frame, info)) #draws heatmap and gets maximum exerted force on any sensel
+        displayHeatmap(frame, info) #draws heatmap and gets maximum exerted force on any sensel
     
-    return runAxi(step, maxForce, prevX, prevY)
+    runAxi(frame, info)
 
 
-def runAxi(step, maxForce, prevX, prevY):
-    w = 100 #drawing width
-    dH = 1000 #change of height between lines
-    forceModifier = 1 #how much height force adds
-    dYLim = 1 #max of how much y can change in a tick
-
-    x = step%w
-    y = (step//w)*dH+maxForce*forceModifier
+def runAxi(frame, info):
+    (x, y) = axi.current_pos()
+    num_rows = info.num_rows
+    num_cols = info.num_cols
 
     #constrain how much y can change
-    if y <= 115:
-        if prevY - y > dYLim: #too big a drop in y
-            y = prevY-dYLim
-        elif prevY - y < -dYLim: #too big a rise in y
-            y = prevY+dYLim
-        
-        if x < 1:  #floating point inaccuracy
-            axi.moveto(x, y)
-        else:
-            axi.lineto(x, y)
+    if 0 <= y <= 115 and 0 <= x <= 180:
+        forces = []
+        dirs = [[1, 0], [0, 1], [-1, 0], [0, -1]]
+        for i in range(4):
+            axi.line(dirs[i][0], dirs[i][1])
+            axi.delay(500)
 
-        return (x, y)
+            error = sensel.readSensor(handle)
+            (error, num_frames) = sensel.getNumAvailableFrames(handle)
+            for j in range(num_frames):
+                error = sensel.getFrame(handle, frame)
+                displayHeatmap(frame, info) #draws heatmap and gets maximum exerted force on any sensel
 
-    else:
-        return (0, 0)
+            force_array = frame.force_array
+            maxForce = -1
+            for j in range(num_rows*num_cols):
+                maxForce = max(maxForce, force_array[j])
+
+            forces.append(maxForce)
+
+            axi.line(-1*dirs[i][0], -1*dirs[i][1])
+
+        maxForceIdx = 0
+        metaMaxForce = -1
+        for i in range(len(forces)):
+            if forces[i] > metaMaxForce:
+                maxForceIdx = i
+                metaMaxForce = forces[i]
+
+        print("______")
+        print(forces)
+        print(maxForceIdx)
+        axi.line(dirs[maxForceIdx][0], dirs[maxForceIdx][0])
+                
 
 
 def displayHeatmap(frame, info):
@@ -92,13 +106,10 @@ def displayHeatmap(frame, info):
     force_matrix = np.zeros((num_rows, num_cols), dtype=np.float32)
 
     # Manually fill the NumPy array with values from force_array
-    maxForce = 0
     for row in range(num_rows):
         for col in range(num_cols):
             index = row * num_cols + col
             force_matrix[row, col] = force_array[index]
-
-            maxForce = max(maxForce, force_array[index])
 
     # Normalize force_matrix to range 0-255
     forceLimit = 700
@@ -120,7 +131,6 @@ def displayHeatmap(frame, info):
     cv2.imshow('Force Heatmap', heatmap_resized)
     cv2.waitKey(1)  # Required for the image to update
 
-    return maxForce
 
 def closeSensel(frame):
     error = sensel.freeFrameData(handle, frame)
@@ -137,10 +147,8 @@ if __name__ == "__main__":
         t = threading.Thread(target=waitForEnter)
         t.start()
         step = 0
-        (prevX, prevY) = (0, 0)
         while not enter_pressed:
-            (prevX, prevY) = scanFrames(frame, info, step, prevX, prevY)
-            step += 0.5
+            scanFrames(frame, info)
         closeSensel(frame)
     else:
         print("Failed to open Sensel device.")
