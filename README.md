@@ -1,2 +1,2 @@
 # crumplePlotter
- Repository for my Crumple Plotter Project where I measure the amount of crumpling a paper has undergone using an axidraw and a sensel touchpad
+ Repository for my Ball and Line project where I move a pen held by an Axidraw to the sensed location of a ball, knocking the ball to a new location, looping the process indefinitely.
